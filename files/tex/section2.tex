@@ -1,0 +1,268 @@
+% ============================================================
+% Section II: TCP RST Attack
+% File: section2.tex
+% ============================================================
+
+
+% ---- Section 2 figure numbering: Fig. 2.x ----
+\setcounter{figure}{0}
+\renewcommand{\thefigure}{2.\arabic{figure}}
+\captionsetup[figure]{name=Fig., font=footnotesize, skip=1pt}
+
+% ---- Reduce whitespace around figures/code ----
+\setlength{\textfloatsep}{3pt plus 1pt minus 1pt}
+\setlength{\floatsep}{3pt plus 1pt minus 1pt}
+\setlength{\intextsep}{3pt plus 1pt minus 1pt}
+\setlength{\abovecaptionskip}{1pt}
+\setlength{\belowcaptionskip}{-4pt}
+
+% ---- Image sizing helpers ----
+\newcommand{\rstimg}[1]{\includegraphics[width=0.96\columnwidth]{images/rst attack/#1}}
+\newcommand{\rstmsg}[1]{\includegraphics[width=0.68\columnwidth]{images/rst attack/#1}}
+
+\subsection{Background}
+
+TCP uses reset packets during normal operation to close unwanted, invalid, or broken connections. A TCP session is identified by a four-tuple, which includes the client IP address, client port, server IP address, and server port. A TCP RST attack exploits this built-in reset behavior by forging a packet with the RST flag set. If the packet has the correct four-tuple and an acceptable sequence number, the receiving host may treat it as legitimate and close the connection.
+
+This highlights one of the important weaknesses of TCP: by default, TCP packets are not authenticated. A receiver mainly decides whether a packet belongs to a connection based on header fields and sequence numbers. For an on-path attacker, this is especially useful because the attacker can monitor live traffic and directly observe the sequence and acknowledgment values needed to craft a believable packet. A blind attacker can also attempt this attack, but that version requires more guessing because the attacker cannot see the active session.
+
+The goal of this part of the project was to demonstrate an on-path TCP RST attack. The attacker first gains visibility into the client-server connection, then sends a spoofed reset packet that appears to come from the client. Once the server accepts the reset, the connection is dropped.
+
+\subsection{Lab Setup}
+
+The lab was modeled using a Docker bridge network with three containers: Client, Server, and Attacker. All three containers were placed on the \texttt{10.20.0.0/24} subnet. The client and server established a TCP connection using Netcat on port 9090, while the attacker used ARP spoofing to become on-path and monitor the session.
+
+\begin{table}[H]
+\centering
+\caption{TCP RST Lab Addressing}
+\label{tab:rst_addresses}
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Host} & \textbf{Address / Role} \\
+\hline
+Client & 10.20.0.2 \\
+Server & 10.20.0.3:9090 \\
+Attacker & 10.20.0.4 \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Network.jpg}
+\caption{Docker network created for the TCP RST attack lab.}
+\label{fig:rst_network}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Run_Containers.jpg}
+\caption{Client, Server, and Attacker containers running on the Docker network.}
+\label{fig:rst_containers}
+\end{figure}
+
+Each container used the same Ubuntu-based image with the tools needed for the demo, including Netcat, tcpdump, dsniff, and Python with Scapy. Before starting the attack, connectivity between the containers was verified.
+
+\begin{figure}[!t]
+\centering
+\rstimg{Client_Ping.png}
+\caption{Client container successfully reaching the other hosts.}
+\label{fig:rst_client_ping}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Server_Ping.png}
+\caption{Server container connectivity test.}
+\label{fig:rst_server_ping}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Attacker_Ping.png}
+\caption{Attacker container connectivity test.}
+\label{fig:rst_attacker_ping}
+\end{figure}
+
+\subsection{TCP Session}
+
+After verifying connectivity, the server started a Netcat listener on port 9090. The client then connected to the server and sent test messages to confirm that the TCP session was working normally before the attack.
+
+\begin{figure}[!t]
+\centering
+\rstmsg{Message1.png}
+\caption{Message sent from the client to the server before the attack.}
+\label{fig:rst_message1}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstmsg{Message2.png}
+\caption{Server receiving the client's message over the Netcat session.}
+\label{fig:rst_message2}
+\end{figure}
+
+The active connection was checked with \texttt{ss -tnp}. This showed the session in the \texttt{ESTAB} state. The observed TCP four-tuple was \texttt{10.20.0.2:46828 -> 10.20.0.3:9090}. This four-tuple matters because the forged RST packet has to look like it belongs to this same connection.
+
+\begin{figure}[!t]
+\centering
+\rstimg{TCP_Session.png}
+\caption{Established TCP session showing the client port, server port, and connection state.}
+\label{fig:rst_tcp_session}
+\end{figure}
+
+\subsection{On-Path Attacker Position}
+
+The attacker was placed on-path using ARP spoofing. This step allows the attacker to monitor traffic between the client and server. In this setup, the attacker pretends to be the server when talking to the client, and pretends to be the client when talking to the server. IP forwarding was enabled so the connection could continue while traffic passed through the attacker.
+
+\begin{figure}[!t]
+\centering
+\rstimg{Forwarding.png}
+\caption{IP forwarding enabled on the attacker container.}
+\label{fig:rst_forwarding}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{ArpA.png}
+\caption{Attacker spoofing ARP replies toward the client.}
+\label{fig:rst_arpa}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{ArpB.png}
+\caption{Attacker spoofing ARP replies toward the server.}
+\label{fig:rst_arpb}
+\end{figure}
+
+After ARP spoofing was started, additional messages were sent between the client and server to confirm that the connection was still usable. This showed that the attacker was forwarding traffic instead of simply breaking the connection.
+
+\begin{figure}[!t]
+\centering
+\rstmsg{Message3.png}
+\caption{Client sending another message after ARP spoofing begins.}
+\label{fig:rst_message3}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstmsg{Message4.png}
+\caption{Server still receiving messages while the attacker is on-path.}
+\label{fig:rst_message4}
+\end{figure}
+
+\subsection{Sniffing and RST Injection}
+
+Once the attacker was on-path, it could sniff TCP packets belonging to the active session. This gave the attacker the key values needed for the reset attack, including the source port, sequence number, acknowledgment number, and payload length.
+
+\begin{figure}[!t]
+\centering
+\rstmsg{Message5.png}
+\caption{Client message used to confirm the attacker could observe traffic.}
+\label{fig:rst_message5}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Sniff.png}
+\caption{Attacker sniffing TCP packets between the client and server.}
+\label{fig:rst_sniff}
+\end{figure}
+
+The attack script was written with Scapy. It waits for a packet from the client to the server, extracts the client source port, reads the TCP sequence number, and calculates the next expected sequence number. Since TCP sequence numbers count bytes, the script uses:
+
+\begin{center}
+\texttt{reset sequence = TCP sequence + payload length}
+\end{center}
+
+The script then creates a spoofed TCP packet with the client IP as the source, the server IP as the destination, the calculated sequence number, and the RST flag set.
+
+\begin{figure}[H]
+\centering
+\fbox{%
+\begin{minipage}{0.95\columnwidth}
+\ttfamily\tiny
+if ip.src == CLIENT\_IP and ip.dst == SERVER\_IP:\par
+\hspace*{1.2em}if tcp.dport == SERVER\_PORT:\par
+\hspace*{2.4em}client\_port = tcp.sport\par
+\hspace*{2.4em}payload\_len = len(bytes(tcp.payload))\par
+\hspace*{2.4em}rst\_seq = tcp.seq + payload\_len\par
+\vspace{2pt}
+\hspace*{2.4em}rst\_packet = IP(src=CLIENT\_IP, dst=SERVER\_IP) / TCP(\par
+\hspace*{3.6em}sport=client\_port,\par
+\hspace*{3.6em}dport=SERVER\_PORT,\par
+\hspace*{3.6em}flags="R",\par
+\hspace*{3.6em}seq=rst\_seq\par
+\hspace*{2.4em})\par
+\vspace{2pt}
+\hspace*{2.4em}send(rst\_packet, iface="eth0", verbose=False)
+\end{minipage}%
+}
+\caption{Simplified Scapy logic for the TCP RST attack.}
+\label{fig:rst_scapy}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Attack1.png}
+\caption{RST attack script waiting for the client to send a packet.}
+\label{fig:rst_attack1}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstmsg{Message6.png}
+\caption{Client sends a message that triggers the RST attack script.}
+\label{fig:rst_message6}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Attack2.png}
+\caption{Attacker script calculating the sequence number and sending the spoofed RST packet.}
+\label{fig:rst_attack2}
+\end{figure}
+
+\subsection{Results and Discussion}
+
+The attack succeeded when the server accepted the spoofed RST packet and closed the Netcat connection. After this happened, the client could not continue using the same TCP session. The connection was also no longer shown as established when checked from the client and server.
+
+\begin{figure}[!t]
+\centering
+\rstimg{ServerClose.png}
+\caption{Server-side Netcat session closes after receiving the spoofed RST packet.}
+\label{fig:rst_server_close}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstmsg{Message7.png}
+\caption{Client attempts to send another message after the connection has been reset.}
+\label{fig:rst_message7}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Verify1.png}
+\caption{Client-side verification showing the TCP connection is no longer established.}
+\label{fig:rst_verify1}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Verify2.png}
+\caption{Server-side verification showing the TCP connection has terminated.}
+\label{fig:rst_verify2}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\rstimg{Verify3.png}
+\caption{Packet capture showing the reset packet sent during the attack.}
+\label{fig:rst_verify3}
+\end{figure}
+
+This demonstrated that the attacker did not need to read or modify the application data to disrupt the session. Once the attacker could see the connection details and calculate the expected sequence number, it could craft a believable reset packet and force the connection to close. In this sense, the TCP RST attack is mainly a denial-of-service attack against an active connection.
+
+The Docker setup is simplified, but it still models a realistic local network situation. An attacker on the same LAN, public Wi-Fi, or a compromised network device could potentially become on-path and monitor traffic in a similar way. For blind attacks, strong sequence number randomization, port randomization, anti-spoofing filters, and RFC 5961 challenge ACK behavior help make guessing much harder. For on-path attacks, the more important defense is preventing the attacker from reaching that position in the first place through protections like Dynamic ARP Inspection, DHCP Snooping, VLAN segmentation, and ARP spoofing detection. TLS protects application data, but it does not directly stop forged TCP reset packets against the outer TCP connection, so VPNs, SSH tunnels, or IPsec can be more effective when traffic needs stronger protection.

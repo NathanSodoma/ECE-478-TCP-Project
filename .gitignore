@@ -1,0 +1,29 @@
+# LaTeX build files
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.lof
+*.lot
+
+# Beamer/slides build files
+*.nav
+*.snm
+*.vrb
+
+# Temporary/editor files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ignore PDF files
+# *.pdf
