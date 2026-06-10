@@ -22,9 +22,9 @@
 
 \subsection{Background}
 
-TCP uses reset packets during normal operation to close unwanted, invalid, or broken connections. A TCP session is identified by a four-tuple, which includes the client IP address, client port, server IP address, and server port. A TCP RST attack exploits this built-in reset behavior by forging a packet with the RST flag set. If the packet has the correct four-tuple and an acceptable sequence number, the receiving host may treat it as legitimate and close the connection.
+TCP uses reset packets during normal operation to close unwanted, invalid, or broken connections. A TCP session is identified by a four-tuple, which includes the client IP address, client port, server IP address, and server port. A TCP RST attack exploits this built-in reset behavior by forging a packet with the RST flag set. If the packet has the correct four-tuple and an acceptable sequence number, the receiving host may treat it as legitimate and close the connection \cite{heaton2020rst,rfc5961}.
 
-This highlights one of the important weaknesses of TCP: by default, TCP packets are not authenticated. A receiver mainly decides whether a packet belongs to a connection based on header fields and sequence numbers. For an on-path attacker, this is especially useful because the attacker can monitor live traffic and directly observe the sequence and acknowledgment values needed to craft a believable packet. A blind attacker can also attempt this attack, but that version requires more guessing because the attacker cannot see the active session.
+This highlights one of the important weaknesses of TCP: by default, TCP packets are not authenticated. A receiver mainly decides whether a packet belongs to a connection based on header fields and sequence numbers. For an on-path attacker, this is especially useful because the attacker can monitor live traffic and directly observe the sequence and acknowledgment values needed to craft a believable packet. A blind attacker can also attempt this attack, but that version requires more guessing because the attacker cannot see the active session \cite{rfc5961,heaton2020rst}.
 
 The goal of this part of the project was to demonstrate an on-path TCP RST attack. The attacker first gains visibility into the client-server connection, then sends a spoofed reset packet that appears to come from the client. Once the server accepts the reset, the connection is dropped.
 
@@ -170,7 +170,7 @@ Once the attacker was on-path, it could sniff TCP packets belonging to the activ
 \label{fig:rst_sniff}
 \end{figure}
 
-The attack script was written with Scapy. It waits for a packet from the client to the server, extracts the client source port, reads the TCP sequence number, and calculates the next expected sequence number. Since TCP sequence numbers count bytes, the script uses:
+The attack script was written with Scapy. It waits for a packet from the client to the server, extracts the client source port, reads the TCP sequence number, and calculates the next expected sequence number \cite{rfc9293,heaton2020rst}. Since TCP sequence numbers count bytes, the script uses:
 
 \begin{center}
 \texttt{reset sequence = TCP sequence + payload length}
@@ -263,6 +263,6 @@ The attack succeeded when the server accepted the spoofed RST packet and closed 
 \label{fig:rst_verify3}
 \end{figure}
 
-This demonstrated that the attacker did not need to read or modify the application data to disrupt the session. Once the attacker could see the connection details and calculate the expected sequence number, it could craft a believable reset packet and force the connection to close. In this sense, the TCP RST attack is mainly a denial-of-service attack against an active connection.
+This demonstrated that the attacker did not need to read or modify the application data to disrupt the session. Once the attacker could see the connection details and calculate the expected sequence number, it could craft a believable reset packet and force the connection to close. In this sense, the TCP RST attack is mainly a denial-of-service attack against an active connection \cite{heaton2020rst}.
 
-The Docker setup is simplified, but it still models a realistic local network situation. An attacker on the same LAN, public Wi-Fi, or a compromised network device could potentially become on-path and monitor traffic in a similar way. For blind attacks, strong sequence number randomization, port randomization, anti-spoofing filters, and RFC 5961 challenge ACK behavior help make guessing much harder. For on-path attacks, the more important defense is preventing the attacker from reaching that position in the first place through protections like Dynamic ARP Inspection, DHCP Snooping, VLAN segmentation, and ARP spoofing detection. TLS protects application data, but it does not directly stop forged TCP reset packets against the outer TCP connection, so VPNs, SSH tunnels, or IPsec can be more effective when traffic needs stronger protection.
+The Docker setup is simplified, but it still models a realistic local network situation. An attacker on the same LAN, public Wi-Fi, or a compromised network device could potentially become on-path and monitor traffic in a similar way. For blind attacks, strong sequence number randomization, port randomization, anti-spoofing filters, and RFC 5961 challenge ACK behavior help make guessing much harder \cite{rfc5961}. For on-path attacks, the more important defense is preventing the attacker from reaching that position in the first place through protections like Dynamic ARP Inspection, DHCP Snooping, VLAN segmentation, and ARP spoofing detection. TLS protects application data, but it does not directly stop forged TCP reset packets against the outer TCP connection, so VPNs, SSH tunnels, or IPsec can be more effective when traffic needs stronger protection.
