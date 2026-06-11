@@ -1,0 +1,161 @@
+% ============================================================
+% Section III: TCP Session Hijacking
+% File: section3.tex
+% ============================================================
+
+% ---- Section 3 figure numbering: Fig. 3.x ----
+\setcounter{figure}{0}%
+\renewcommand{\thefigure}{3.\arabic{figure}}%
+\captionsetup[figure]{name=Fig., font=footnotesize, skip=1pt}%
+
+% ---- Reduce whitespace around figures/code ----
+\setlength{\textfloatsep}{3pt plus 1pt minus 1pt}%
+\setlength{\floatsep}{3pt plus 1pt minus 1pt}%
+\setlength{\intextsep}{3pt plus 1pt minus 1pt}%
+\setlength{\abovecaptionskip}{1pt}%
+\setlength{\belowcaptionskip}{-4pt}%
+
+% ---- Image sizing helpers ----
+\newcommand{\hjimg}[1]{\includegraphics[width=0.96\columnwidth]{images/hijack/#1}}%
+\newcommand{\hjmsg}[1]{\includegraphics[width=0.68\columnwidth]{images/hijack/#1}}%
+
+\subsection{Background}
+
+TCP session hijacking is an attack in which an attacker takes over an active TCP connection between a client and a server. Instead of tearing the connection down like a TCP RST attack, the attacker injects data into the existing session so that the server accepts the malicious payload as if it had come from the legitimate client. The result is that the attacker can run commands or send data on behalf of the client without ever completing a handshake of their own.
+
+The attack works because TCP identifies a connection using only a four-tuple of client IP, client port, server IP, and server port, together with the sequence and acknowledgment numbers that track byte order. There is no built-in authentication of who sent a given packet. If an attacker can observe an ongoing session, the attacker can read the current four-tuple, the current SEQ and ACK values, and the payload length of the most recent segment. With that information, the attacker can predict the next expected sequence number and craft a packet that the server will treat as a legitimate continuation of the connection.
+
+The impact of a successful hijack goes beyond denial of service. The attacker can inject arbitrary application-layer data, such as a shell command on a Telnet session, while the original client is desynchronized from the server. After the injection, the client's later packets carry sequence numbers that no longer match what the server expects, which usually causes an ACK storm or a dropped connection on the client side. The goal of this part of the project was to demonstrate this attack from an on-path position against an unencrypted Telnet session, and to show how injected data is accepted and executed by the server while the legitimate client falls out of sync.
+
+\subsection{Lab Setup}
+
+The lab followed the same general structure as the RST attack from Section~\ref{sec:section2}, but used a dedicated environment built with Docker Compose. A bridge network named \texttt{tcp-lab} was created on the \texttt{10.9.0.0/24} subnet with three containers: Attacker, Client, and Victim. The Victim container ran a Telnet server and exposed port \texttt{23/tcp}, the Client opened a Telnet session into the Victim, and the Attacker used ARP spoofing to insert itself on-path between them.
+
+\begin{table}[H]
+\centering
+\caption{TCP Session Hijacking Lab Addressing}
+\label{tab:hj_addresses}
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Host} & \textbf{Address / Role} \\
+\hline
+Client   & 10.9.0.20 \\
+Victim (Server) & 10.9.0.30:23 (Telnet) \\
+Attacker & 10.9.0.10 \\
+\hline
+\end{tabular}
+\end{table}
+
+The running containers and the subnet assignment were confirmed using \texttt{docker compose ps} and \texttt{docker network inspect}, which showed the three containers on the \texttt{10.9.0.0/24} network and the Victim listening on port 23.
+
+\begin{figure}[!t]
+\centering
+\hjimg{Network.png}
+\caption{Docker Compose containers and the \texttt{tcp-lab} network used for the session hijacking lab.}
+\label{fig:hj_network}
+\end{figure}
+
+Each container ran the same Ubuntu-based image with the tools needed for the demo: a Telnet server on the Victim, and \texttt{tcpdump}, \texttt{dsniff} for ARP spoofing, and Python with Scapy on the Attacker. Basic connectivity between the containers was verified before the attack was attempted, for example by pinging the Victim from the Client.
+
+\begin{figure}[!t]
+\centering
+\hjimg{Ping_Test.png}
+\caption{Connectivity test from the Client to the Victim before the attack.}
+\label{fig:hj_ping}
+\end{figure}
+
+Because injecting data into the session causes the Client and Server to desynchronize, the legitimate Client would normally respond to the unexpected traffic by sending a TCP RST and tearing the connection down before the injection could take effect. To keep the session alive long enough for the hijack to succeed, an \texttt{iptables} rule was added on the Client to drop its own outbound RST packets.
+
+\begin{figure}[!t]
+\centering
+\hjimg{TCP_RST_DROP.png}
+\caption{Client configured to drop outbound TCP RST packets so the desynchronized session is not reset during the hijack.}
+\label{fig:hj_rst_drop}
+\end{figure}
+
+\subsection{Establishing the Telnet Session}
+
+With the network in place, the Client opened a Telnet session to the Victim at \texttt{10.9.0.30} and logged in as the \texttt{victim} user. This produced an active, unencrypted TCP session on port 23, which is the session the Attacker targets. Telnet was chosen because it sends keystrokes and command output in clear text, making it a good demonstration of why unauthenticated, unencrypted transports are vulnerable.
+
+\begin{figure}[!t]
+\centering
+\hjimg{Victim_Terminal_POV.png}
+\caption{Client opening and logging into the Telnet session on the Victim.}
+\label{fig:hj_victim_pov}
+\end{figure}
+
+\subsection{Sniffing and Packet Injection}
+
+Once the Attacker reached an on-path position through ARP spoofing, it could observe the live Telnet session in clear text. A Scapy script was used to sniff packets on \texttt{eth0} using the filter \texttt{tcp and dst host 10.9.0.30 and dst port 23}, so that only Client-to-Victim packets were captured. The script waited for a single keypress in the Client's Telnet session to trigger the attack. When the Client pressed a key, the script captured the resulting one-byte segment and read its TCP fields: in the run shown in Fig.~\ref{fig:hj_execution}, the captured packet had \texttt{seq = 1349881495}, \texttt{ack = 3681686510}, and \texttt{len = 1}.
+
+From these values the script calculated the next expected sequence number using the same byte-counting rule used in the RST attack:
+
+\begin{center}
+\texttt{inject sequence = TCP sequence + payload length}
+\end{center}
+
+This gave a next sequence number of \texttt{1349881496}. The script then crafted a spoofed packet with the Client IP as the source, the Victim IP as the destination, the matching four-tuple, the calculated sequence number, the captured acknowledgment number, and the \texttt{PSH} and \texttt{ACK} flags set. The payload was the shell command \texttt{touch /tmp/hijacked\textbackslash r\textbackslash n}, a 21-byte segment that was injected three times in a row to improve the chance of delivery. Unlike the RST attack, the goal here is not to close the connection but to push command bytes into it so the Victim executes them.
+
+\begin{figure}[H]
+\centering
+\fbox{%
+\begin{minipage}{0.95\columnwidth}
+\ttfamily\tiny
+SERVER\_PORT = 23\par
+PAYLOAD = b"touch /tmp/hijacked\textbackslash r\textbackslash n"\par
+\vspace{2pt}
+if ip.src == CLIENT\_IP and ip.dst == SERVER\_IP:\par
+\hspace*{1.2em}if tcp.dport == SERVER\_PORT:\par
+\hspace*{2.4em}client\_port = tcp.sport\par
+\hspace*{2.4em}payload\_len = len(bytes(tcp.payload))\par
+\hspace*{2.4em}next\_seq = tcp.seq + payload\_len\par
+\hspace*{2.4em}next\_ack = tcp.ack\par
+\vspace{2pt}
+\hspace*{2.4em}inj = IP(src=CLIENT\_IP, dst=SERVER\_IP) / TCP(\par
+\hspace*{3.6em}sport=client\_port,\par
+\hspace*{3.6em}dport=SERVER\_PORT,\par
+\hspace*{3.6em}flags="PA",\par
+\hspace*{3.6em}seq=next\_seq,\par
+\hspace*{3.6em}ack=next\_ack\par
+\hspace*{2.4em}) / Raw(load=PAYLOAD)\par
+\vspace{2pt}
+\hspace*{2.4em}for \_ in range(3):\par
+\hspace*{3.6em}send(inj, iface="eth0", verbose=False)
+\end{minipage}%
+}
+\caption{Simplified Scapy logic for the TCP session hijacking attack.}
+\label{fig:hj_scapy}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\hjimg{HIJACK_EXECUTION.png}
+\caption{Attacker sniffing the Client-to-Victim packet, computing the next sequence number, and injecting the spoofed command three times.}
+\label{fig:hj_execution}
+\end{figure}
+
+\subsection{Results and Discussion}
+
+The attack succeeded when the Victim accepted the injected packet as a normal continuation of the Client's session and executed the embedded command. Because the spoofed segment carried the correct four-tuple and the next expected sequence number, the Victim's TCP stack treated it as in-order data from the Client and passed it up to the shell, which ran \texttt{touch /tmp/hijacked}. Listing the \texttt{/tmp} directory on the Victim afterward showed the newly created \texttt{hijacked} file, confirming that the injected command had run with the Client's privileges.
+
+\begin{figure}[!t]
+\centering
+\hjimg{PROOF_OF_HIJACK.png}
+\caption{The \texttt{hijacked} file created in \texttt{/tmp} on the Victim, proving the injected command was executed.}
+\label{fig:hj_proof}
+\end{figure}
+
+A packet capture taken during the attack shows the return traffic that the Victim generated in response to the injected segment, including the Telnet shell prompt echoed back over the connection. This confirms that the Victim treated the spoofed packet as valid in-sequence data rather than discarding it.
+
+\begin{figure}[!t]
+\centering
+\hjimg{RETURN_PACKET_CAPTURE_EXAMPLE.png}
+\caption{Packet capture of the Victim's response to the injected segment, showing the echoed shell prompt.}
+\label{fig:hj_return_capture}
+\end{figure}
+
+After the injection, the Victim's view of the connection had advanced by the length of the injected payload, but the Client's view had not. When the Client tried to continue typing, its sequence numbers were now behind what the Victim expected, producing the desynchronization described in the background. Without the RST-suppression rule from Fig.~\ref{fig:hj_rst_drop}, this desynchronization would have caused the Client to reset and tear down the session almost immediately; dropping the Client's outbound RST packets kept the connection in place long enough for the injected command to be delivered and executed.
+
+This result shows that the attacker did not need to break TCP or guess any cryptographic secret. The combination of an unauthenticated transport, a predictable in-order sequence space, and visibility into the connection was enough to insert arbitrary commands into an established session. In that sense, session hijacking is a stronger attack than the RST attack from Section 2 instead of only being able to terminate the session, the attacker can act as the Client and run commands on the Victim until the connection desynchronizes.
+
+The lab uses Docker on a single host, but the same conditions appear on shared LANs, public Wi-Fi, and any segment where an attacker can reach a layer-2 position between the endpoints. The strongest mitigation is end-to-end encryption with authentication, such as SSH or TLS, because even an on-path attacker who can see the TCP headers cannot produce valid ciphertext for the application layer; using SSH instead of Telnet would have prevented this attack outright. At the network level, Dynamic ARP Inspection, DHCP Snooping, IP Source Guard, and VLAN segmentation make it much harder for the attacker to reach the on-path position in the first place. Strong, randomized initial sequence numbers, which modern operating systems already use, defeat blind hijacking attempts but do not help against an attacker who can sniff the live session. Finally, monitoring for ACK storms or sudden desynchronization, along with application-level session tokens and reconnection logic, can help detect or recover from a hijack after it has happened.
